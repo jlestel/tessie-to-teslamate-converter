@@ -95,8 +95,10 @@ def build_session_dc_map(charging):
     print(f"  Sessions: {dc_count} DC, {ac_count} AC")
     return ts_dc
 
-def main(input_dir, output_dir):
+def main(input_dir, output_dir, vin=None, display_name=None):
     """Main conversion function."""
+    vin = vin or "TESLA_DEFAULT_VIN"
+    display_name = display_name or "My Tesla"
     print("Reading Tessie files...")
     os.makedirs(output_dir, exist_ok=True)
 
@@ -219,10 +221,10 @@ def main(input_dir, output_dir):
         row['battery_heater_no_power'] = 'False'
 
         # Fixed metadata
-        row['display_name'] = 'Public Release'
-        row['vin'] = 'TESLA_DEFAULT_VIN'
+        row['display_name'] = display_name
+        row['vin'] = vin
         row['vehicle_id'] = '1'
-        row['vehicle_name'] = 'Public Release'
+        row['vehicle_name'] = display_name
 
         # Normalize
         if bl.strip():
@@ -280,5 +282,9 @@ if __name__ == '__main__':
                        help='Directory containing input CSV files')
     parser.add_argument('--output-dir', default='./output',
                        help='Directory for output CSV files')
+    parser.add_argument('--vin', default=None,
+                       help='VIN of the vehicle (optional, default: TESLA_DEFAULT_VIN)')
+    parser.add_argument('--display-name', default=None,
+                       help='Display name of the vehicle (optional, default: "My Tesla")')
     args = parser.parse_args()
-    main(args.input_dir, args.output_dir)
+    main(args.input_dir, args.output_dir, vin=args.vin, display_name=args.display_name)

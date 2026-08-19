@@ -24,8 +24,17 @@ Place your Tessie export CSVs in a single directory. The converter looks for the
 ```bash
 pip install -r requirements.txt
 
-python converter.py --input-dir ./tessie_data --output-dir ./output
+python converter.py --input-dir ./tessie_data --output-dir ./output --vin "YOUR_VIN" --display-name "My Tesla"
 ```
+
+Arguments :
+
+| Argument | Description |
+|----------|-------------|
+| `--input-dir` | Directory containing the 5 Tessie CSV files |
+| `--output-dir` | Directory for output TeslaFi CSV files |
+| `--vin` | Your vehicle's VIN (optional, default: `TESLA_DEFAULT_VIN`) |
+| `--display-name` | Your vehicle's display name (optional, default: `My Tesla`) |
 
 The output directory will contain one file per month: `TeslaFiMMYYYY.csv`.
 
