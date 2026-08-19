@@ -40,11 +40,19 @@ The output directory will contain one file per month: `TeslaFiMMYYYY.csv`.
 
 ## Importing into TeslaMate
 
-1. Open your TeslaMate instance
-2. Go to **"Import from TeslaFi"** in the main menu
-3. Upload all generated `TeslaFi*.csv` files
-4. Set timezone to **"Etc/UTC"** (Tessie data is UTC)
-5. Click **Import**
+1. Mount an `import` directory in your docker-compose (if not already done):
+   ```yaml
+   volumes:
+     - ./import:/opt/app/import
+   ```
+2. Copy the generated `TeslaFi*.csv` files into your `./import` directory
+3. **Restart the TeslaMate container**
+4. Open TeslaMate — the import form appears **instead of the vehicle summary**
+5. Select your **local timezone** (data is in UTC, but TeslaMate converts based on the selected timezone)
+6. Click **Import**
+7. After import completes, empty the `./import` directory and restart TeslaMate
+
+> ⚠️ **Note:** In older TeslaMate versions (pre-v1.27), this feature may not be available. Update to the latest version first.
 
 ## How it works
 
