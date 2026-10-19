@@ -62,6 +62,26 @@ def to_float(v):
     except Exception:
         return None
 
+MILE_KM = 1.609344
+
+# Max age of the last driving sample before the car is treated as parked.
+# Tessie logs driving_states roughly every 30-60s while moving, so a gap wider
+# than this means the car stopped/slept (or the export ended mid-drive). Keeping
+# a stale shift="D" forward-filled across such a gap makes TeslaMate build one
+# giant drive whose duration_min overflows the smallint column on import.
+STALE_DRIVE_SECONDS = 600  # 10 minutes
+
+def to_miles_value(row, mi_key, km_key):
+    """Return a distance/speed as miles-string for the TeslaFi format.
+    Tessie may export either imperial (mi/mph) or metric (km/km/h) columns
+    depending on the account's unit setting. TeslaMate's TeslaFi importer
+    expects miles and reconverts to km, so metric inputs are converted here."""
+    v = (row.get(mi_key, '') or '').strip()
+    if v:
+        return v  # already miles/mph -> passthrough
+    f = to_float(row.get(km_key, ''))
+    return '' if f is None else f'{f / MILE_KM:.6f}'
+
 def build_session_dc_map(charging):
     """Group Starting/Charging states into contiguous sessions, classify by peak power, return {ts: is_dc}."""
     sessions = []
@@ -121,6 +141,18 @@ def main(input_dir, output_dir, vin=None, display_name=None):
     all_ts = sorted(all_ts)
     print(f"Unique timestamps: {len(all_ts)}")
 
+    # Rows are only emitted at charging timestamps, so those are what TeslaMate
+    # sees. A drive stays OPEN until a non-driving row closes it, and TeslaMate
+    # dates the drive end at that closing row. If the last row before a data gap
+    # is still shift="D", the drive is only closed by the first row AFTER the
+    # gap, so its duration spans the whole gap -> drives.duration_min overflows.
+    # Precompute the gap to the next emitted (charging) row for each timestamp.
+    charging_ts_sorted = sorted(charging_by_ts.keys())
+    next_gap = {}
+    for i, cts in enumerate(charging_ts_sorted):
+        nxt = charging_ts_sorted[i + 1] if i + 1 < len(charging_ts_sorted) else None
+        next_gap[cts] = None if nxt is None else (nxt - cts).total_seconds()
+
     months = defaultdict(list)
     last_driving = {}
     last_battery = {}
@@ -154,15 +186,15 @@ def main(input_dir, output_dir, vin=None, display_name=None):
         row['battery_level'] = bl
         row['usable_battery_level'] = bl
 
-        battery_range = charging_row.get('Battery Range (mi)', '')
-        ideal_range = charging_row.get('Ideal Battery Range (mi)', '')
+        battery_range = to_miles_value(charging_row, 'Battery Range (mi)', 'Battery Range (km)')
+        ideal_range = to_miles_value(charging_row, 'Ideal Battery Range (mi)', 'Ideal Battery Range (km)')
         if not ideal_range.strip():
             ideal_range = battery_range
         row['battery_range'] = battery_range
         row['ideal_battery_range'] = ideal_range
 
-        row['charge_rate'] = charging_row.get('Charge Rate (mph)', '')
-        row['charger_actual_current'] = ''
+        row['charge_rate'] = to_miles_value(charging_row, 'Charge Rate (mph)', 'Charge Rate (km/h)')
+        row['charger_actual_current'] = charging_row.get('Charger Current (A)', '')
         charger_power_str = charging_row.get('Charger Power (kW)', '')
         row['charger_power'] = charger_power_str
         row['charger_voltage'] = charging_row.get('Charger Voltage (V)', '')
@@ -193,11 +225,28 @@ def main(input_dir, output_dir, vin=None, display_name=None):
         row['charge_energy_added'] = charge_energy_added
 
         # --- Drive state (forward-fill) ---
-        row['shift_state'] = last_driving.get('Shift State', '')
+        # Guard against stale drive state: Tessie stops logging driving_states
+        # when the car parks/sleeps, and an export can end mid-drive (last
+        # sample still shift="D"). Forward-filling that across a data gap makes
+        # TeslaMate treat everything up to the next sample as ONE drive, so
+        # drives.duration_min (smallint, minutes) overflows past 32767 and the
+        # import crashes with a Postgrex EncodeError. If the last driving sample
+        # is older than STALE_DRIVE_SECONDS, consider the car parked.
+        driving_ts = last_driving.get('_ts')
+        driving_stale = driving_ts is None or (ts - driving_ts).total_seconds() > STALE_DRIVE_SECONDS
+        # forward_gap: the next emitted row is far away (or this is the last row),
+        # so any open drive must be closed HERE to avoid it spanning the gap.
+        fg = next_gap.get(ts)
+        forward_gap = fg is None or fg > STALE_DRIVE_SECONDS
+        if driving_stale or forward_gap:
+            row['shift_state'] = 'P'
+            row['speed'] = ''
+        else:
+            row['shift_state'] = last_driving.get('Shift State', '')
+            row['speed'] = to_miles_value(last_driving, 'Speed (mph)', 'Speed (km/h)')
         row['latitude'] = last_driving.get('Latitude', '')
         row['longitude'] = last_driving.get('Longitude', '')
-        row['speed'] = last_driving.get('Speed (mph)', '')
-        row['odometer'] = last_driving.get('Odometer (mi)', '')
+        row['odometer'] = to_miles_value(last_driving, 'Odometer (mi)', 'Odometer (km)')
         row['battery_current'] = last_battery.get('Pack Current (A)', '')
 
         # --- Power (kW) = pack_current × pack_voltage / 1000 ---
